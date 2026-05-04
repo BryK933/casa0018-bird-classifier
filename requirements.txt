@@ -1,0 +1,5 @@
+tflite-runtime
+picamera2
+RPi.GPIO
+numpy
+Pillow
