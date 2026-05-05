@@ -16,7 +16,7 @@ deter unwanted species (pigeon, blackbird).
 - Window-mounted acrylic feeder
 
 ## Wiring Diagram
-![Wiring](9edf5032-5bb3-4820-b5a2-e8553c783dc2.jpeg)
+![Wiring](Hardware.png)
 
 ## Model
 - Platform: Edge Impulse
