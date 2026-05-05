@@ -1,69 +1,74 @@
 import RPi.GPIO as GPIO
-import tflite_runtime.interpreter as tflite
-from picamera2 import Picamera2
-import numpy as np
 import time
+import subprocess
+import threading
+import json
+import websocket
 
-# ── GPIO Setup ──────────────────────────────────────────────
-PIR_PIN    = 4   # GPIO 4,  physical pin 7
-BUZZER_PIN = 17  # GPIO 17, physical pin 11
-
+PIR_PIN = 4
 GPIO.setmode(GPIO.BCM)
-GPIO.setup(PIR_PIN,    GPIO.IN)
-GPIO.setup(BUZZER_PIN, GPIO.OUT, initial=GPIO.LOW)
+GPIO.setup(PIR_PIN, GPIO.IN)
 
-# ── Load TFLite Model ────────────────────────────────────────
-interpreter = tflite.Interpreter(model_path="models/bird_classifier.tflite")
-interpreter.allocate_tensors()
-input_details  = interpreter.get_input_details()
-output_details = interpreter.get_output_details()
+BIRDS = ["blackbird", "robin", "pigeon", "wren"]
+last_detection = {}
 
-LABELS   = ["blackbird", "pigeon", "robin", "wren"]
-UNWANTED = {"pigeon", "blackbird"}
+def on_message(ws, message):
+    try:
+        data = json.loads(message)
+        if "result" in data:
+            result = data["result"]
+            if "classification" in result:
+                scores = result["classification"]
+                best = max(scores, key=scores.get)
+                conf = scores[best]
+                if conf > 0.6:
+                    print("="*30)
+                    print("BIRD: " + best.upper())
+                    print("CONFIDENCE: " + str(round(conf*100,1)) + "%")
+                    print("BUZZER: Alert!")
+                    print("="*30)
+    except:
+        pass
 
-# ── Camera Setup ─────────────────────────────────────────────
-camera = Picamera2()
-camera.configure(camera.create_still_configuration(
-    main={"size": (96, 96), "format": "RGB888"}
-))
-camera.start()
-time.sleep(2)
+def on_error(ws, error):
+    pass
 
-def classify_image():
-    frame = camera.capture_array()
-    img   = frame.astype(np.float32) / 255.0
-    img   = np.expand_dims(img, axis=0)
+def on_close(ws, a, b):
+    pass
 
-    interpreter.set_tensor(input_details<sup>0</sup>['index'], img)
-    interpreter.invoke()
+def on_open(ws):
+    print("Connected to classifier!")
 
-    output     = interpreter.get_tensor(output_details<sup>0</sup>['index'])<sup>0</sup>
-    species    = LABELS[np.argmax(output)]
-    confidence = float(np.max(output))
-    return species, confidence
+def start_runner():
+    subprocess.Popen(["edge-impulse-linux-runner",
+        "--model", "/home/bryank93/birdfeeder.eim"])
 
-# ── Main Loop ────────────────────────────────────────────────
-print("Bird Classifier Running — waiting for motion...")
+print("Starting classifier...")
+t = threading.Thread(target=start_runner)
+t.daemon = True
+t.start()
+time.sleep(5)
+
+print("Waiting for motion...")
 try:
     while True:
         if GPIO.input(PIR_PIN):
-            print("Motion detected! Capturing image...")
-            species, confidence = classify_image()
-            print(f"Result: {species} (confidence: {confidence:.2f})")
-
-            if species in UNWANTED and confidence > 0.6:
-                print(f"UNWANTED species — activating buzzer!")
-                GPIO.output(BUZZER_PIN, GPIO.HIGH)
-                time.sleep(1)
-                GPIO.output(BUZZER_PIN, GPIO.LOW)
-            else:
-                print(f"WANTED species ({species}) — no action.")
-
+            print("Motion! Connecting to classifier...")
+            ws = websocket.WebSocketApp("ws://192.168.1.189:4912",
+                on_message=on_message,
+                on_error=on_error,
+                on_close=on_close,
+                on_open=on_open)
+            wst = threading.Thread(target=ws.run_forever)
+            wst.daemon = True
+            wst.start()
+            time.sleep(5)
+            ws.close()
+            print("Cooling down...")
             time.sleep(3)
-        time.sleep(0.1)
-
+        else:
+            time.sleep(0.1)
 except KeyboardInterrupt:
-    print("Stopping...")
+    print("Stopped!")
 finally:
-    camera.stop()
     GPIO.cleanup()
